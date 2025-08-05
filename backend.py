@@ -66,6 +66,11 @@ CRITICAL: When providing code examples:
 - Format with 4-space indentation
 - Each statement on its own line
 
+FOR MATH:
+- Wrap inline math in \\( ... \\)
+- Wrap block math in $$ ... $$
+- Use proper LaTeX syntax
+
 Example format:
 ```csharp
 // Declare and initialize an integer array

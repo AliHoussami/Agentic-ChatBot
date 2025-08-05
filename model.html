@@ -6,11 +6,21 @@
     <title>AI Chatbot Enhanced</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/animate.css@4.1.1/animate.min.css"/>
+    <script>
+window.MathJax = {
+    tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    }
+};
+</script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-csharp.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
     <!-- Add more languages as needed -->
     <style>
         :root {
@@ -822,6 +832,7 @@
                         // Add next character
                         contentDiv.innerHTML = formatted.slice(0, i);
                         Prism.highlightAll();
+                        if (window.MathJax) MathJax.typesetPromise([contentDiv]);
                         i++;
                         if (i <= formatted.length) {
                             setTimeout(typeWriter, 12); // Adjust speed here (ms per char)
@@ -966,6 +977,8 @@
     codeBlocks.forEach((block, index) => {
         content = content.replace(`__CODE_BLOCK_${index}__`, block);
     });
+
+    
     
     return content;
 }
