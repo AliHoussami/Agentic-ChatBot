@@ -146,6 +146,62 @@ class AgentTools:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
 
+    @staticmethod
+    def execute_csharp_code(code):
+            """Execute C# code using dotnet"""
+            import subprocess
+            import tempfile
+            import os
+            import shutil
+            try:
+                    temp_dir = os.path.join(tempfile.gettempdir(), f"csharp_temp_{os.getpid()}")
+                    os.makedirs(temp_dir, exist_ok=True)
+
+                    try:
+                        subprocess.run(['dotnet', 'new', 'console', '--force'], 
+                                      cwd=temp_dir, capture_output=True, text=True, check=True)
+                        
+                        program_file = os.path.join(temp_dir, 'Program.cs')
+                                            
+                        if 'class Program' not in code and 'static void Main' not in code:
+                            wrapped_code = f"""using System;
+
+
+using System;
+class Program 
+{{
+    static void Main() 
+    {{
+        {code}
+    }}
+}}"""
+                        else:
+                          wrapped_code = code
+
+                        with open(program_file, 'w', encoding='utf-8') as f:
+                         f.write(wrapped_code)
+
+                        result = subprocess.run(['dotnet', 'run'], 
+                                  cwd=temp_dir, capture_output=True, text=True, timeout=10)
+                                
+
+                        if result.returncode == 0:
+                          return result.stdout.strip() if result.stdout.strip() else "C# executed successfully"
+                        else:
+                          return f"C# Error: {result.stderr.strip()}"
+                        
+                    finally:
+                        try:
+                            shutil.rmtree(temp_dir)
+                        except:
+                            pass
+
+            except subprocess.TimeoutExpired:
+                return "C# execution timeout"
+            except Exception as e:
+                return f"C# Error: {result.stderr.strip()}"
+            
+
 class SimpleChatBot:
     def __init__(self):
         self.conversation_history = []
@@ -355,9 +411,29 @@ Be clear and concise in explanations."""
                 print(f"DEBUG: Found code: {repr(code_part)}")
                 task.result = AgentTools.execute_python_code(code_part)
                 print(f"DEBUG: Execution result: {repr(task.result)}")
+            elif '```csharp' in task.description or '```c#' in task.description:
+                if '```csharp' in task.description:
+                    code_start = task.description.find('```csharp') + len('```csharp')
+                else:
+                    code_start = task.description.find('```c#') + len('```c#')
+
+                code_part = task.description[code_start:].strip()
+                if '```' in code_part:
+                    code_part = code_part[:code_part.find('```')]
+                code_part = code_part.strip()
+                print(f"DEBUG: Found C# code: {repr(code_part)}")
+                task.result = AgentTools.execute_csharp_code(code_part)
+            elif 'print(' in task.description or 'for ' in task.description:
+                if ':' in task.description:
+                    code_part = task.description.split(':', 1)[1].strip()
+                else:
+                    code_part = task.description
+                print(f"DEBUG: Found plain Python code: {repr(code_part)}")
+                task.result = AgentTools.execute_python_code(code_part)          
             else:
-                print(f"DEBUG: No ```python found")
-                task.result = "No Python code block found. Use ```python ... ``` format"            
+                print(f"DEBUG: No supported code found")
+                task.result = "No supported code found. Use ```python or ```csharp format"    
+                           
         else:
             task.result = "Task completed"
         
