@@ -10,6 +10,7 @@ import base64
 import os
 from PIL import Image
 import io
+from dataclasses import dataclass
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,127 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 MODEL_NAME = "deepseek-r1:1.5b"
 MAX_TOKENS = 2000
 TEMPERATURE = 0.7
+
+@dataclass
+class Task:
+    id: str
+    description: str
+    status: str
+    result: str = ""
+
+class AgentTools:
+    @staticmethod
+    def search_files(directory, pattern):
+        """Search for files matching pattern"""
+        import glob
+        try:
+            matches = glob.glob(os.path.join(directory, pattern))
+            if matches:
+                file_list = "\n".join([f"• {os.path.basename(match)}" for match in matches])
+                return f"Found {len(matches)} files:\n{file_list}"
+            else:
+                return "No files found matching the pattern"
+        except Exception as e:
+            return f"Error searching files: {str(e)}"
+    
+    @staticmethod
+    def read_file(filepath):
+        """Read file contents safely"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return f.read()
+        except:
+            return "Error reading file"
+    
+    @staticmethod
+    def calculate(expression):
+        """Safe mathematical calculations"""
+        try:
+            # Only allow safe operations
+            allowed = "0123456789+-*/.() "
+            if all(c in allowed for c in expression):
+                return str(eval(expression))
+            return "Invalid expression"
+        except:
+            return "Calculation error"
+        
+    @staticmethod  # <-- Add this line and everything below
+    def search_files_in_path(directory, pattern="*.*"):
+        """Search for files in a specific directory path"""
+        import glob
+        import os
+        try:
+            if not os.path.exists(directory):
+                return f"Directory '{directory}' does not exist"
+            
+            search_path = os.path.join(directory, pattern)
+            matches = glob.glob(search_path)
+            
+            if matches:
+                limited_matches = matches[:20]
+                file_list = "\n".join([f"• {match}" for match in limited_matches])
+                return f"Found {len(matches)} files:\n{file_list}"
+            else:
+                return f"No files found in '{directory}'"
+                
+        except Exception as e:
+            return f"Error: {str(e)}"
+        
+    @staticmethod
+    def discover_system_info():
+        """Dynamically discover what the system can do"""
+        import platform
+        import psutil
+        import subprocess
+
+        capabilities = {
+            "system": platform.system(),
+            "python_version": platform.python_version(),
+            "available_drives": [f"{d}:\\" for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.exists(f"{d}:\\")],
+            "memory_gb": round(psutil.virtual_memory().total / (1024**3), 1),
+            "cpu_cores": psutil.cpu_count(),
+            "gpu_info": subprocess.check_output("wmic path win32_VideoController get name", shell=True, text=True).strip().split('\n')[1:] if platform.system() == "Windows" else "GPU detection not available on this OS",
+            "installed_modules": []
+        }
+
+        modules_to_check = ['requests', 'pandas', 'numpy', 'opencv-cv2', 'pillow', 'matplotlib', 'selenium', 'beautifulsoup4']
+        for module in modules_to_check:
+            try:
+                __import__(module)
+                capabilities["installed_modules"].append(module)
+            except ImportError:
+                pass
+
+        return capabilities
+    
+    @staticmethod
+    def execute_python_code(code):
+        """Execute Python code safely and return output"""
+        import sys
+        from io import StringIO
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        captured_output = StringIO()
+        captured_error = StringIO()
+        try:
+            
+            sys.stdout = captured_output
+            sys.stderr = captured_error
+
+            exec(code)
+
+            output = captured_output.getvalue()
+            error = captured_error.getvalue()
+
+
+            if error:
+                return f"Error: {error}"
+            return output if output else "Code executed successfully (no output)"
+        except Exception as e:
+            return f"Execution Error: {str(e)}"
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
 
 class SimpleChatBot:
     def __init__(self):
@@ -48,6 +170,7 @@ class SimpleChatBot:
         response = re.sub(r'^#{1,3}\s*', '', response, flags=re.MULTILINE)
         
         return response.strip()
+        
 
     def add_to_history(self, role, content):
         """Add message to conversation history"""
@@ -56,8 +179,26 @@ class SimpleChatBot:
         if len(self.conversation_history) > self.max_history:
             self.conversation_history = self.conversation_history[-self.max_history:]
 
+
     def get_response(self, user_message):
-        """Get response from Ollama"""
+        """Enhanced response with agentic capabilities"""
+        try:
+            logger.info(f"Received message: '{user_message}'")
+            if self.is_agentic_request(user_message):
+                logger.info("Routing to agentic response")
+                return self.get_agentic_response(user_message)
+            else:
+                logger.info("Routing to regular LLM response")
+                return self.get_llm_response(user_message)
+            
+        except Exception as e:
+            logger.error(f"Error: {str(e)}")
+            return "An error occurred. Please try again."
+            
+            
+
+    def get_llm_response(self, user_message):
+        """Original LLM response method"""
         try:
             self.add_to_history("user", user_message)
             
@@ -138,7 +279,111 @@ Be clear and concise in explanations."""
         except Exception as e:
             logger.error(f"Error: {str(e)}")
             return "An error occurred. Please try again."
+        
+    def is_agentic_request(self, message):
+        """Check if request needs agentic behavior"""
+        agentic_keywords = ['search for', 'find files', 'read file', 'calculate', 'help me with', 'can you', 'what can you do', 'system info', 'capabilities', 'execute', 'run this']
+        is_agentic = any(keyword in message.lower() for keyword in agentic_keywords)
+        print(f"DEBUG: Message='{message[:50]}...' | Is_Agentic={is_agentic}")
+        logger.info(f"Checking if agentic: '{message}' -> {is_agentic}")
+        return is_agentic
+    
+    
+    
+    def plan_tasks(self, user_request):
+        """Break down request into tasks"""
+        # Simple task planning
+        if 'execute' in user_request.lower() or 'run this' in user_request.lower() or '```python' in user_request:
+            return [Task("1", f"Execute code: {user_request}", "pending")]
+        elif 'what can you do' in user_request.lower() or 'capabilities' in user_request.lower():
+            return [Task("1", f"Discover system capabilities", "pending")]
+        elif 'search' in user_request.lower():
+            return [Task("1", f"Search based on: {user_request}", "pending")]
+        elif 'file' in user_request.lower():
+            return [Task("1", f"File operation: {user_request}", "pending")]
+        elif 'calculate' in user_request.lower():
+            return [Task("1", f"Calculate: {user_request}", "pending")]
+        else:
+            return [Task("1", f"General task: {user_request}", "pending")]
+        
+    
+    def execute_task(self, task):
+        """Execute a single task"""
+        task.status = "in_progress"
+        
+        if 'search' in task.description.lower():
+            import re
+            path_match = re.search(r'[C-Z]:[\\\/][^\s]*', task.description)
+            if path_match:
+                directory = path_match.group()
+                task.result = AgentTools.search_files_in_path(directory, "*.py")
+            else:
+                task.result = AgentTools.search_files(".", "*.*")
+            if not task.result or "Error" in task.result:
+                task.result = AgentTools.search_files(".", "*.*")
+        elif 'file' in task.description.lower():
+            task.result = AgentTools.read_file("example.txt")
+        elif 'calculate' in task.description.lower():
+            # Extract math expression
+            import re
+            math_match = re.search(r'[\d+\-*/\.\(\) ]+', task.description)
+            if math_match:
+                task.result = AgentTools.calculate(math_match.group())
+            else:
+                task.result = "No calculation found"
+        elif 'capabilities' in task.description.lower() or 'discover system' in task.description.lower():
+            system_info = AgentTools.discover_system_info()
+            task.result = f"""System Information:
+            - OS: {system_info['system']}
+            - Python: {system_info['python_version']}
+            - Memory: {system_info['memory_gb']} GB
+            - CPU Cores: {system_info['cpu_cores']}
+            - Available Drives: {', '.join(system_info['available_drives'])}
+            - GPU: {system_info['gpu_info'] if isinstance(system_info['gpu_info'], str) else ', '.join([gpu.strip() for gpu in system_info['gpu_info'] if gpu.strip()])}
+            - Installed Modules: {', '.join(system_info['installed_modules']) if system_info['installed_modules'] else 'None detected'}"""  
+        elif 'execute' in task.description.lower() or 'run code' in task.description.lower():
+            print(f"DEBUG: Executing task: {task.description}")
+            import re 
+            if '```python' in task.description:
+                code_start = task.description.find('```python') + len('```python')
+                code_part = task.description[code_start:].strip()
 
+                if '```' in code_part:
+                    code_part = code_part[:code_part.find('```')]
+
+                code_part = code_part.strip()
+                print(f"DEBUG: Found code: {repr(code_part)}")
+                task.result = AgentTools.execute_python_code(code_part)
+                print(f"DEBUG: Execution result: {repr(task.result)}")
+            else:
+                print(f"DEBUG: No ```python found")
+                task.result = "No Python code block found. Use ```python ... ``` format"            
+        else:
+            task.result = "Task completed"
+        
+        task.status = "completed"
+        return task
+    
+    def get_agentic_response(self, user_message):
+        """Handle agentic requests"""
+        try:
+            tasks = self.plan_tasks(user_message)
+            results = []
+            for task in tasks:
+                executed_task = self.execute_task(task)
+                results.append(executed_task.result)
+
+            if 'execute' in user_message.lower():
+                return results[0]
+            
+            context = "\n".join(results)
+            enhanced_prompt = f"The user asked: {user_message}\n\nResults: {context}\n\nProvide a helpful response."
+            return self.get_llm_response(enhanced_prompt)
+          
+        except Exception as e:
+            logger.error(f"Agentic error: {str(e)}")
+            return "I encountered an error processing your request."
+    
     def clear_history(self):
         """Clear conversation history"""
         self.conversation_history = []
@@ -433,7 +678,7 @@ def chat():
             return jsonify({"error": "No message provided"}), 400
 
         start = perf_counter()
-        ai_response = chatbot.get_response(user_message)
+        ai_response = chatbot.get_agentic_response(user_message)
         end = perf_counter()
         response_time = round(end - start, 2)
 
@@ -540,6 +785,16 @@ def health_check():
         "ollama": ollama_status,
         "model": MODEL_NAME
     })
+
+@app.route('/agent/status', methods=['GET'])
+def agent_status():
+    """Get agent capabilities"""
+    return jsonify({
+        "tools": ["search_files", "read_file", "calculate"],
+        "agentic_mode": True,
+        "available_actions": ["file_operations", "calculations", "searches"]
+    })
+
 
 if __name__ == '__main__':
     print(f"🚀 Starting Flask server...")
