@@ -12,9 +12,13 @@ class Chatbot {
         this.chatHistory = [];
         this.isConnected = true;
         this.isDarkMode = localStorage.getItem('darkMode') === 'true';
-        
+        this.chatSessions = JSON.parse(localStorage.getItem('chatSessions')) || [];
+        this.currentSessionId = null;
+        this.sessionCounter = this.chatSessions.length;
+        window.chatbot = this;
         this.init();
     }
+    
     
     init() {
         this.sendButton.addEventListener('click', () => this.sendMessage());
@@ -49,6 +53,15 @@ class Chatbot {
         document.getElementById('imageInput').addEventListener('change', (e) => {
             this.handleImageUpload(e);
         });
+
+        document.getElementById('newChatBtn').addEventListener('click', () => this.createNewChat());
+        this.loadChatSessions();
+        if (this.chatSessions.length === 0) {
+             this.createNewChat();
+            } else {
+                 this.switchToChat(this.chatSessions[0].id);
+        }
+        document.getElementById('sidebarToggle').addEventListener('click', () => this.toggleSidebar());
         
         // Initial state
         this.sendButton.disabled = true;
@@ -57,6 +70,7 @@ class Chatbot {
         this.checkConnection();
         this.applyTheme();
     }
+
 
     updateCharCounter() {
         const count = this.input.value.length;
@@ -490,6 +504,161 @@ class Chatbot {
         this.messages.appendChild(row);
         this.scrollToBottom();
     }
+    createNewChat() {
+        this.saveCurrentSession();
+    
+    const newSession = {
+        id: Date.now(),
+        title: 'New Chat',
+        messages: [],
+        timestamp: new Date().toISOString()
+    };
+    
+    this.chatSessions.unshift(newSession);
+    this.currentSessionId = newSession.id;
+    this.chatHistory = [];
+    
+    this.messages.innerHTML = '';
+    this.addWelcomeMessage();
+    this.updateChatList();
+    this.saveSessions();
+}
+
+switchToChat(sessionId) {
+    this.saveCurrentSession();
+    
+    const session = this.chatSessions.find(s => s.id === sessionId);
+    if (session) {
+        this.currentSessionId = sessionId;
+        this.chatHistory = session.messages;
+        this.loadMessages();
+        this.updateChatList();
+    }
+}
+
+saveCurrentSession() {
+    if (this.currentSessionId && this.chatHistory.length > 0) {
+        const session = this.chatSessions.find(s => s.id === this.currentSessionId);
+        if (session) {
+            session.messages = [...this.chatHistory];
+            if (session.title === 'New Chat' && this.chatHistory.length > 0) {
+                session.title = this.chatHistory[0].text.slice(0, 30) + '...';
+            }
+        }
+    }
+}
+
+loadMessages() {
+    this.messages.innerHTML = '';
+    if (this.chatHistory.length === 0) {
+        this.addWelcomeMessage();
+    } else {
+        this.chatHistory.forEach(msg => {
+            // Add the message without calling addMessage (to avoid duplicating in history)
+            this.displayMessage(msg.text, msg.sender, msg.isError);
+        });
+    }
+}
+displayMessage(text, sender, isError = false) {
+    // This is like addMessage but doesn't save to history
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    const row = document.createElement('div');
+    row.className = `message-row ${sender}-row animate__animated animate__fadeInUp`;
+
+    const avatar = document.createElement('div');
+    avatar.className = `avatar ${sender}-avatar`;
+    avatar.innerHTML = sender === 'bot'
+        ? `<svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4C14.21,4 16,5.79 16,8C16,10.21 14.21,12 12,12C9.79,12 8,10.21 8,8C8,5.79 9.79,4 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z" /></svg>`
+        : `<svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.41,14 20,15.79 20,18V20H4V18C4,15.79 7.59,14 12,14Z" /></svg>`;
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}-message${isError ? ' error-message' : ''}`;
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+
+    if (sender === 'bot') {
+        contentDiv.innerHTML = this.formatBotMessage(text);
+    } else {
+        contentDiv.textContent = text;
+    }
+
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'message-time';
+    timeDiv.textContent = timestamp;
+
+    messageDiv.appendChild(contentDiv);
+    messageDiv.appendChild(timeDiv);
+    row.appendChild(avatar);
+    row.appendChild(messageDiv);
+
+    this.messages.appendChild(row);
+    this.scrollToBottom();
+}
+
+updateChatList() {
+    const chatList = document.getElementById('chatList');
+    chatList.innerHTML = '';
+    
+    this.chatSessions.forEach(session => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${session.id === this.currentSessionId ? 'active' : ''}`;
+        item.innerHTML = `
+            <div class="chat-title">${session.title}</div>
+            <div class="chat-preview">${session.messages.length > 0 ? session.messages[0].text.slice(0, 50) : 'No messages'}</div>
+            <button class="delete-chat-btn" onclick="chatbot.deleteChat(${session.id}, event)">×</button>
+        `;
+        item.onclick = () => this.switchToChat(session.id);
+        chatList.appendChild(item);
+    });
+}
+
+loadChatSessions() {
+    this.updateChatList();
+}
+
+saveSessions() {
+    localStorage.setItem('chatSessions', JSON.stringify(this.chatSessions));
+}  
+
+toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('collapsed');
+    
+    // Change toggle arrow direction
+    const toggle = document.getElementById('sidebarToggle');
+    const svg = toggle.querySelector('svg path');
+    if (sidebar.classList.contains('collapsed')) {
+        svg.setAttribute('d', 'm9 18 6-6-6-6'); // Arrow pointing right
+    } else {
+        svg.setAttribute('d', 'm15 18-6-6 6-6'); // Arrow pointing left
+    }
+}
+
+deleteChat(sessionId, event) {
+    event.stopPropagation(); // Prevent switching to this chat
+    
+    if (this.chatSessions.length <= 1) {
+        this.showToast('Cannot delete the last chat', 'error');
+        return;
+    }
+    
+    if (!confirm('Are you sure you want to delete this chat?')) {
+        return;
+    }
+    
+    this.chatSessions = this.chatSessions.filter(s => s.id !== sessionId);
+    
+    // If we deleted the current chat, switch to the first one
+    if (sessionId === this.currentSessionId) {
+        this.switchToChat(this.chatSessions[0].id);
+    }
+    
+    this.updateChatList();
+    this.saveSessions();
+    this.showToast('Chat deleted successfully');
+}
 }
 
 document.addEventListener('DOMContentLoaded', () => {

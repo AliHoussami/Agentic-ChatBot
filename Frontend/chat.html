@@ -25,6 +25,22 @@ window.MathJax = {
     <!-- Add more languages as needed -->
 </head>
 <body>
+    <div class="main-container">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+               <button class="new-chat-btn" id="newChatBtn">+ New Chat</button>
+            </div>            
+            <div class="chat-list" id="chatList">
+                <!-- Chat sessions will be added here -->
+            </div>
+        </div>
+        
+        <button class="sidebar-toggle" id="sidebarToggle">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m15 18-6-6 6-6">
+            </svg>
+        </button>
+        
     <div class="chat-container">
         <div class="chat-header">
             <div class="status-indicator" id="statusIndicator"></div>
