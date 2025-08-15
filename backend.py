@@ -11,6 +11,8 @@ import os
 from PIL import Image
 import io
 from dataclasses import dataclass
+import collections
+from typing import Dict, List, Set, Tuple
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +32,22 @@ class Task:
     description: str
     status: str
     result: str = ""
+
+
+@dataclass
+class ConversationContext:
+    """Track conversation context for better understanding"""
+    languages_mentioned: Set[str]
+    topics_discussed: Set[str] 
+    user_skill_level: str  # beginner, intermediate, advanced
+    question_types: List[str]
+    error_patterns: List[str]
+    
+    def __post_init__(self):
+        if not isinstance(self.languages_mentioned, set):
+            self.languages_mentioned = set()
+        if not isinstance(self.topics_discussed, set):
+            self.topics_discussed = set()
 
 class AgentTools:
     @staticmethod
@@ -206,6 +224,219 @@ class SimpleChatBot:
         self.conversation_history = []
         self.max_history = 6  # Keep last 6 messages
 
+    def classify_question_type(self, message: str) -> str:
+        """Classify the type of programming question"""
+        message_lower = message.lower()
+        if any(word in message_lower for word in ["error", "exception", "bug", "not working", "broken", "crash"]):
+            return "debugging"
+        elif any(phrase in message_lower for phrase in ["how to", "how do i", "how can i", "tutorial", "guide"]):
+            return "tutorial"
+        elif any(word in message_lower for word in ["best", "better", "optimize", "improve", "recommend"]):
+            return "advice"
+        elif any(phrase in message_lower for phrase in ["explain", "what does", "analyze", "review"]):
+            return "explanation"
+        elif any(word in message_lower for word in ["vs", "versus", "compare", "difference"]):
+            return "comparison"
+        elif any(word in message_lower for word in ["install", "setup", "configure", "environment"]):
+            return "setup"
+        else:
+            return "general"
+        
+    def extract_programming_languages(self, message: str) -> Set[str]:
+        """Extract mentioned programming languages from message"""
+        languages = {
+            'python', 'javascript', 'java', 'c#', 'csharp', 'c++', 'cpp', 'c', 
+            'php', 'ruby', 'go', 'rust', 'swift', 'kotlin', 'scala', 'r',
+            'html', 'css', 'sql', 'typescript', 'dart', 'perl', 'bash', 'shell'
+        }
+        message_lower = message.lower()
+        found_languages = set()
+
+        for lang in languages:
+            if lang in message_lower:
+                # Normalize language names
+                if lang in ['c#', 'csharp']:
+                    found_languages.add('csharp')
+                elif lang in ['c++', 'cpp']:
+                    found_languages.add('cpp')
+                elif lang == 'javascript':
+                    found_languages.add('javascript')
+                else:
+                    found_languages.add(lang)
+                    
+        return found_languages
+    
+    def detect_skill_level(self, message: str, history: List[Dict]) -> str:
+        """Detect user's programming skill level"""
+        message_lower = message.lower()
+        
+        # Beginner indicators
+        beginner_keywords = [
+            'beginner', 'new to', 'learning', 'just started', 'first time',
+            'basics', 'simple', 'easy way', 'tutorial', 'guide'
+        ]
+        
+        # Advanced indicators  
+        advanced_keywords = [
+            'optimization', 'performance', 'architecture', 'design pattern',
+            'algorithm complexity', 'scalability', 'refactor', 'enterprise'
+        ]
+        
+        if any(keyword in message_lower for keyword in beginner_keywords):
+            return 'beginner'
+        elif any(keyword in message_lower for keyword in advanced_keywords):
+            return 'advanced'
+        
+        # Check conversation history for skill indicators
+        recent_messages = [msg.get('content', '') for msg in history[-4:]]
+        all_text = ' '.join(recent_messages).lower()
+        
+        if any(keyword in all_text for keyword in beginner_keywords):
+            return 'beginner'
+        elif any(keyword in all_text for keyword in advanced_keywords):
+            return 'advanced'
+            
+        return 'intermediate'
+    
+    def build_context_from_history(self) -> ConversationContext:
+        """Extract context from recent conversation history"""
+        languages_mentioned = set()
+        topics_discussed = set()
+        question_types = []
+        error_patterns = []
+        
+        # Analyze last 6 messages
+        for msg in self.conversation_history[-6:]:
+            content = msg.get('content', '')
+            
+            # Extract languages
+            languages_mentioned.update(self.extract_programming_languages(content))
+            
+            # Extract question type
+            q_type = self.classify_question_type(content)
+            if q_type != 'general':
+                question_types.append(q_type)
+            
+            # Extract topics (frameworks, technologies)
+            content_lower = content.lower()
+            topics = [
+                'react', 'angular', 'vue', 'nodejs', 'express', 'django', 'flask',
+                'spring', 'hibernate', 'mongodb', 'mysql', 'postgresql', 'redis',
+                'docker', 'kubernetes', 'aws', 'azure', 'git', 'machine learning',
+                'ai', 'web development', 'mobile development', 'game development'
+            ]
+            
+            for topic in topics:
+                if topic in content_lower:
+                    topics_discussed.add(topic)
+            
+            # Extract error patterns
+            if any(word in content_lower for word in ['error', 'exception', 'traceback']):
+                error_patterns.append(content[:100])  # First 100 chars
+        
+        skill_level = self.detect_skill_level(
+            self.conversation_history[-1].get('content', '') if self.conversation_history else '',
+            self.conversation_history
+        )
+        
+        return ConversationContext(
+            languages_mentioned=languages_mentioned,
+            topics_discussed=topics_discussed,
+            user_skill_level=skill_level,
+            question_types=question_types[-3:],  # Keep last 3 question types
+            error_patterns=error_patterns[-2:]   # Keep last 2 error patterns
+        )
+    
+    def get_dynamic_system_prompt(self, user_message: str, context: ConversationContext) -> str:
+        """Generate dynamic system prompt based on context"""
+        base_prompt = """You are a helpful programming assistant focused on clear communication and practical solutions.
+
+QUESTION UNDERSTANDING:
+- Read the entire question carefully before responding
+- If a question is vague or ambiguous, ask for clarification
+- Identify the programming language, framework, or technology mentioned
+- Determine the user's skill level from context (beginner/intermediate/advanced)
+- Look for specific requirements, constraints, or desired outcomes
+- Pay attention to error messages, code snippets, or examples provided
+
+RESPONSE STRATEGY:
+- Start with a direct answer to the main question
+- If multiple interpretations exist, address the most likely one first
+- Break down complex problems into smaller, manageable parts
+- Explain the "why" behind solutions, not just the "how"
+- Anticipate follow-up questions and provide relevant context
+
+CODE FORMATTING RULES:
+- ALWAYS use proper line breaks and indentation
+- NEVER put multiple statements on one line  
+- Use markdown code blocks with language tags
+- Format with 4-space indentation for most languages
+- Each statement on its own line
+- Include helpful comments explaining key concepts
+
+MATH FORMATTING:
+- Wrap inline math in \\( ... \\)
+- Wrap block math in $$ ... $$
+- Use proper LaTeX syntax
+
+COMMUNICATION STYLE:
+- Be concise but thorough
+- Use simple language when possible
+- Provide examples that match the user's context
+- If you need more information, ask specific questions
+- Acknowledge when you're making assumptions
+
+Remember: Better to ask for clarification than to guess incorrectly."""
+
+        # Add context-specific guidance
+        dynamic_additions = []
+        
+        # Language-specific guidance
+        if context.languages_mentioned:
+            langs = ', '.join(context.languages_mentioned)
+            dynamic_additions.append(f"\nCONTEXT: User is working with {langs}. Focus on best practices for these languages.")
+        
+        # Skill level adjustments
+        if context.user_skill_level == 'beginner':
+            dynamic_additions.append("""
+BEGINNER MODE:
+- Provide extra explanations and context
+- Define technical terms when first used
+- Include step-by-step instructions
+- Suggest learning resources when appropriate
+- Be encouraging and patient""")
+        
+        elif context.user_skill_level == 'advanced':
+            dynamic_additions.append("""
+ADVANCED MODE:
+- Focus on efficiency and best practices
+- Discuss trade-offs and alternatives
+- Include performance considerations
+- Reference design patterns when relevant
+- Assume familiarity with basic concepts""")
+        
+        # Question type specific guidance
+        if 'debugging' in context.question_types:
+            dynamic_additions.append("""
+DEBUGGING FOCUS:
+- Ask for complete error messages and stack traces
+- Suggest systematic debugging approaches
+- Recommend debugging tools and techniques""")
+        
+        if 'tutorial' in context.question_types:
+            dynamic_additions.append("""
+TUTORIAL MODE:
+- Provide step-by-step instructions
+- Include multiple examples
+- Explain concepts progressively""")
+        
+        # Topic-specific guidance
+        if context.topics_discussed:
+            topics = ', '.join(list(context.topics_discussed)[:3])  # Limit to 3 topics
+            dynamic_additions.append(f"\nRELEVANT TOPICS: Consider {topics} in your responses.")
+        
+        return base_prompt + ''.join(dynamic_additions)
+
     def clean_response(self, response):
         """Minimal response cleaning - preserve formatting"""
         if not response or not response.strip():
@@ -253,38 +484,21 @@ class SimpleChatBot:
             
 
     def get_llm_response(self, user_message):
-        """Original LLM response method"""
+        """Enhanced LLM response with dynamic prompting and context analysis"""
         try:
             self.add_to_history("user", user_message)
             
-            system_prompt = """You are a helpful programming assistant.
-
-CRITICAL: When providing code examples:
-- ALWAYS use proper line breaks and indentation
-- NEVER put multiple statements on one line  
-- Use markdown code blocks with language tags
-- Format with 4-space indentation
-- Each statement on its own line
-
-FOR MATH:
-- Wrap inline math in \\( ... \\)
-- Wrap block math in $$ ... $$
-- Use proper LaTeX syntax
-
-Example format:
-```csharp
-// Declare and initialize an integer array
-int[] numbers = { 10, 20, 30, 40, 50 };
-
-// Loop through the array using a for loop
-for (int i = 0; i < numbers.Length; i++)
-{
-    Console.WriteLine("Number: " + numbers[i]);
-}
-```
-
-Be clear and concise in explanations."""
-
+            # Build conversation context
+            context = self.build_context_from_history()
+            
+            # Get dynamic system prompt
+            system_prompt = self.get_dynamic_system_prompt(user_message, context)
+            
+            # Log context for debugging
+            logger.info(f"Context - Languages: {context.languages_mentioned}, "
+                       f"Skill: {context.user_skill_level}, "
+                       f"Question type: {self.classify_question_type(user_message)}")
+            
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(self.conversation_history)
             
@@ -593,6 +807,21 @@ def agent_status():
         "available_actions": ["file_operations", "calculations", "searches"]
     })
 
+@app.route('/context', methods=['GET'])
+def get_conversation_context():
+    """Get current conversation context for debugging"""
+    try:
+        context = chatbot.build_context_from_history()
+        return jsonify({
+            "languages_mentioned": list(context.languages_mentioned),
+            "topics_discussed": list(context.topics_discussed),
+            "user_skill_level": context.user_skill_level,
+            "recent_question_types": context.question_types,
+            "conversation_length": len(chatbot.conversation_history)
+        })
+    except Exception as e:
+        logger.error(f"Context error: {str(e)}")
+        return jsonify({"error": "Error getting context"}), 500
 
 if __name__ == '__main__':
     print(f"🚀 Starting Flask server...")
