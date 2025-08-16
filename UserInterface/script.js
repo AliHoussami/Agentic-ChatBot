@@ -1,5 +1,6 @@
 class Chatbot {
     constructor() {
+        this.checkAuth();
         this.messages = document.getElementById('chatMessages');
         this.input = document.getElementById('messageInput');
         this.sendButton = document.getElementById('sendButton');
@@ -71,6 +72,23 @@ class Chatbot {
         this.applyTheme();
     }
 
+    checkAuth() {
+    const user = localStorage.getItem('user');
+    if (!user) {
+        // Redirect to login if not authenticated
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    try {
+        this.currentUser = JSON.parse(user);
+        console.log('Logged in as:', this.currentUser.username);
+    } catch (e) {
+        // Invalid user data, redirect to login
+        localStorage.removeItem('user');
+        window.location.href = 'login.html';
+    }
+}
 
     updateCharCounter() {
         const count = this.input.value.length;

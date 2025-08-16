@@ -13,18 +13,194 @@ import io
 from dataclasses import dataclass
 import collections
 from typing import Dict, List, Set, Tuple
+import bcrypt
+import mysql.connector
+from mysql.connector import Error
+import jwt
+from functools import wraps
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
+CORS(app, supports_credentials=True, origins=['*'])
 
 # Configuration
 OLLAMA_BASE_URL = "http://localhost:11434"
 MODEL_NAME = "deepseek-r1:1.5b"
 MAX_TOKENS = 2000
 TEMPERATURE = 0.7
+
+DB_CONFIG = {
+    'host': 'localhost',
+    'database': 'model_code',
+    'user': 'root',
+    'password': 'Alinx123@'
+}
+JWT_SECRET = 'sk-auth-2024-xyz789-secure-jwt-token-abcd1234-random-key'
+# Add this after your DB_CONFIG
+def test_db_connection():
+    try:
+        connection = mysql.connector.connect(**DB_CONFIG)
+        print("✅ Database connected successfully!")
+        connection.close()
+        return True
+    except Error as e:
+        print(f"❌ Database connection failed: {e}")
+        return False
+
+# Add this before app.run()
+test_db_connection()
+
+def get_db_connection():
+    """Get database connection"""
+    try:
+        connection = mysql.connector.connect(**DB_CONFIG)
+        return connection
+    except Error as e:
+        logger.error(f"Database connection error: {e}")
+        return None
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+        
+        try:
+            if token.startswith('Bearer '):
+                token = token[7:]
+            data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            current_user_id = data['user_id']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Token is invalid'}), 401
+        
+        return f(current_user_id, *args, **kwargs)
+    return decorated
+
+@app.route('/auth/signup', methods=['POST'])
+def signup():
+    """User registration"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not email or not password:
+            return jsonify({'error': 'All fields are required'}), 400
+        
+        if len(password) < 8:
+            return jsonify({'error': 'Password must be at least 8 characters'}), 400
+        
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        cursor = connection.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM Users WHERE username = %s OR email = %s", (username, email))
+        if cursor.fetchone():
+            return jsonify({'error': 'Username or email already exists'}), 400
+        
+        # Hash password
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Insert user
+        cursor.execute(
+            "INSERT INTO Users (username, email, password_hash) VALUES (%s, %s, %s)",
+            (username, email, password_hash)
+        )
+        connection.commit()
+        
+        user_id = cursor.lastrowid
+        
+        # Generate JWT token
+        token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.utcnow() + timedelta(days=30)
+        }, JWT_SECRET, algorithm='HS256')
+        
+        cursor.close()
+        connection.close()
+        
+        return jsonify({
+            'message': 'User created successfully',
+            'token': token,
+            'user': {
+                'id': user_id,
+                'username': username,
+                'email': email
+            }
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Signup error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/auth/login', methods=['POST'])
+def login():
+    """User login"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not password:
+            return jsonify({'error': 'Username and password are required'}), 400
+        
+        connection = get_db_connection()
+        if not connection:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        cursor = connection.cursor()
+        
+        # Get user
+        cursor.execute(
+            "SELECT id, username, email, password_hash FROM Users WHERE username = %s",
+            (username,)
+        )
+        user = cursor.fetchone()
+        
+        if not user or not bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+            return jsonify({'error': 'Invalid username or password'}), 401
+        
+        # Update last login
+        cursor.execute(
+            "UPDATE Users SET last_login = CURRENT_TIMESTAMP WHERE id = %s",
+            (user[0],)
+        )
+        connection.commit()
+        
+        # Generate JWT token
+        token = jwt.encode({
+            'user_id': user[0],
+            'exp': datetime.utcnow() + timedelta(days=30)
+        }, JWT_SECRET, algorithm='HS256')
+        
+        cursor.close()
+        connection.close()
+        
+        return jsonify({
+            'message': 'Login successful',
+            'token': token,
+            'user': {
+                'id': user[0],
+                'username': user[1],
+                'email': user[2]
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 
 @dataclass
 class Task:
