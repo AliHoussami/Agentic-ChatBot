@@ -286,7 +286,7 @@ class AuthHandler {
                 
                 // Redirect to chat after a short delay
                 setTimeout(() => {
-                    window.location.href = '/UserInterface/chat.html';
+                    window.location.href = '../UserInterface/chat.html';
                 }, 1500);
                 
             } else {
@@ -432,6 +432,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const user = localStorage.getItem('user');
     if (user && (window.location.pathname.includes('login') || window.location.pathname.includes('signup'))) {
         // Redirect to chat if already logged in
-        window.location.href = 'chat.html';
+        //routing
     }
 });

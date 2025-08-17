@@ -680,5 +680,5 @@ deleteChat(sessionId, event) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    new Chatbot();
+    new Chatbot()
 });
